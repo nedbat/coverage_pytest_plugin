@@ -6,7 +6,7 @@ import sqlite3
 import sys
 
 
-class WTWPlugin:
+class WTWPlugin(object):
     """ Plugin which implements the --wtw (run only tests that cover changed lines) option """
 
     def __init__(self, config):
@@ -31,14 +31,23 @@ class WTWPlugin:
         except AttributeError:
             rootpath = Path(self.config.rootdir)
             files_changed = set()
-            source_lines_changed = set()
+            source_lines_changed = defaultdict(set)
 
             for file in self.diff:
                 files_changed.add(rootpath / file.path)
                 for hunk in file:
-                    for line in hunk:
-                        if line.source_line_no is not None:
-                            source_lines_changed.add((file.path, line.source_line_no))
+                    source_lines_changed[file.path].add(
+                        lno
+                        for lno in range(
+                            hunk.source_start - 1,
+                            hunk.source_start + hunk.source_length + 1,
+                        )
+                    )
+
+            source_line_masks = {
+                file_path: set_to_bitmask(lines)
+                for file_path, lines in source_lines_changed.items()
+            }
 
             with self.baseline as cursor:
                 cursor.execute("""DROP TABLE IF EXISTS diff_lines""")
@@ -46,7 +55,7 @@ class WTWPlugin:
                     """
                     CREATE TABLE diff_lines(
                         path TEXT,
-                        line INTEGER
+                        linemask BLOB
                     )
                     """
                 )
