@@ -6,7 +6,7 @@ import sqlite3
 import sys
 
 
-class WTWPlugin:
+class WTWPlugin(object):
     """ Plugin which implements the --wtw (run only tests that cover changed lines) option """
 
     def __init__(self, config):
@@ -17,6 +17,7 @@ class WTWPlugin:
             with open(wtw_path) as wtw_file:
                 self.diff = PatchSet(wtw_file)
             self.baseline = sqlite3.connect(config.getoption("wtwdb"))
+            self.baseline.create_function("any_intersection", any_intersection, 2)
         self._skipped_files = 0
         self._report_status = None
 
@@ -31,14 +32,23 @@ class WTWPlugin:
         except AttributeError:
             rootpath = Path(self.config.rootdir)
             files_changed = set()
-            source_lines_changed = set()
+            source_lines_changed = defaultdict(set)
 
             for file in self.diff:
                 files_changed.add(rootpath / file.path)
                 for hunk in file:
-                    for line in hunk:
-                        if line.source_line_no is not None:
-                            source_lines_changed.add((file.path, line.source_line_no))
+                    source_lines_changed[file.path].add(
+                        lno
+                        for lno in range(
+                            hunk.source_start - 1,
+                            hunk.source_start + hunk.source_length + 1,
+                        )
+                    )
+
+            source_line_masks = [
+                (file_path, set_to_bitmask(lines))
+                for file_path, lines in source_lines_changed.items()
+            ]
 
             with self.baseline as cursor:
                 cursor.execute("""DROP TABLE IF EXISTS diff_lines""")
@@ -46,7 +56,7 @@ class WTWPlugin:
                     """
                     CREATE TABLE diff_lines(
                         path TEXT,
-                        line INTEGER
+                        linemask BLOB
                     )
                     """
                 )
@@ -76,8 +86,8 @@ class WTWPlugin:
                     FROM diff_lines dl
                     JOIN file f
                     ON ? || dl.path = f.path
-                    JOIN line l
-                    ON dl.line = l.lineno
+                    JOIN line_map l
+                    ON any_intersection(dl.linemask, l.bitmap)
                     AND l.file_id = f.id
                     JOIN context c
                     ON l.context_id = c.id
@@ -164,3 +174,17 @@ def pytest_addoption(parser):
         dest="wtwdb",
         help="Use this coverage file as a who-tests-what baseline",
     )
+
+
+def set_to_bitmask(nums):
+    nbytes = max(nums) // 8 + 1
+    b = bytearray(nbytes)
+    for num in nums:
+        b[num//8] |= 1 << num % 8
+    return bytes(b)
+
+if sys.version_info < (3, 0):
+    def any_intersection(bits1, bits2):
+        from itertools import izip_longest
+        byte_pairs = izip_longest(bits1, bits2)
+        return int(any((ord(b1) & ord(b2)) for b1, b2 in byte_pairs))
