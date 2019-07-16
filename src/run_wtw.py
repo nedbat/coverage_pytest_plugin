@@ -1,9 +1,12 @@
-from _pytest.pathlib import Path
-from unidiff import PatchSet
+from collections import defaultdict
 import os
+import os.path
 import pytest
 import sqlite3
 import sys
+
+from _pytest.pathlib import Path
+from unidiff import PatchSet
 
 
 class WTWPlugin(object):
@@ -37,16 +40,15 @@ class WTWPlugin(object):
             for file in self.diff:
                 files_changed.add(rootpath / file.path)
                 for hunk in file:
-                    source_lines_changed[file.path].add(
-                        lno
-                        for lno in range(
+                    source_lines_changed[file.path].update(
+                        range(
                             hunk.source_start - 1,
                             hunk.source_start + hunk.source_length + 1,
                         )
                     )
 
             source_line_masks = [
-                (file_path, set_to_bitmask(lines))
+                (os.path.abspath(file_path), buffer(set_to_bitmask(lines)))
                 for file_path, lines in source_lines_changed.items()
             ]
 
@@ -61,7 +63,7 @@ class WTWPlugin(object):
                     """
                 )
                 cursor.executemany(
-                    "INSERT INTO diff_lines VALUES (?, ?)", source_lines_changed
+                    "INSERT INTO diff_lines VALUES (?, ?)", source_line_masks
                 )
 
             with self.baseline as cursor:
@@ -85,7 +87,7 @@ class WTWPlugin(object):
                     SELECT DISTINCT c.context
                     FROM diff_lines dl
                     JOIN file f
-                    ON ? || dl.path = f.path
+                    ON dl.path = f.path
                     JOIN line_map l
                     ON any_intersection(dl.linemask, l.bitmap)
                     AND l.file_id = f.id
@@ -94,7 +96,6 @@ class WTWPlugin(object):
                     WHERE
                         c.context <> ''
                     """,
-                    [common_prefix],
                 ):
                     specifier, _, calltype = context.rpartition("|")
                     filepath, _, _ = specifier.partition("::")
@@ -132,7 +133,7 @@ class WTWPlugin(object):
             for item in items
             if item.nodeid in contexts
             or any(
-                Path(item.nodeid.rpartition("::")[0]) for changed_file in files_changed
+                Path(item.nodeid.partition("::")[0]) == changed_file for changed_file in files_changed
             )
         ]
         selected_set = set(selected_items)
@@ -186,5 +187,5 @@ def set_to_bitmask(nums):
 if sys.version_info < (3, 0):
     def any_intersection(bits1, bits2):
         from itertools import izip_longest
-        byte_pairs = izip_longest(bits1, bits2)
+        byte_pairs = izip_longest(bits1, bits2, fillvalue='\x00')
         return int(any((ord(b1) & ord(b2)) for b1, b2 in byte_pairs))
