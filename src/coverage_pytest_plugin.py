@@ -4,6 +4,7 @@
 """A pytest plugin to define dynamic contexts"""
 
 import coverage
+import pytest
 
 
 class ContextPlugin(object):
