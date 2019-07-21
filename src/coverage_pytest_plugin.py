@@ -11,6 +11,7 @@ class ContextPlugin(object):
     def __init__(self, config):
         self.config = config
         self.active = config.getoption("pytest-contexts")
+        self.active = True
 
     def pytest_runtest_setup(self, item):
         self.doit(item, "setup")
