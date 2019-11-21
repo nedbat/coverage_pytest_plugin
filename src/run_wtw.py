@@ -18,7 +18,7 @@ class WTWPlugin(object):
         if self.active:
             wtw_path = config.getoption("wtw")
             with open(wtw_path) as wtw_file:
-                self.diff = PatchSet(wtw_file)
+                self.diff = PatchSet(wtw_file, encoding='utf-8')
             self.baseline = sqlite3.connect(config.getoption("wtwdb"))
             self.baseline.create_function("any_intersection", 2, any_intersection)
         self._skipped_files = 0
